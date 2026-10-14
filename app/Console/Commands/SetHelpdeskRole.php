@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\AuditLog;
 use App\Models\User;
 use Illuminate\Console\Command;
 
@@ -27,7 +28,17 @@ class SetHelpdeskRole extends Command
             return self::FAILURE;
         }
 
-        $user->update(['role' => $role]);
+        $user->update([
+            'role' => $role,
+            'must_change_password' => $role === 'admin' ? true : $user->must_change_password,
+        ]);
+        AuditLog::create([
+            'action' => 'user.role_changed',
+            'subject_type' => User::class,
+            'subject_id' => $user->id,
+            'description' => "Role for {$user->username} was changed to {$role} from the command line.",
+            'metadata' => ['role' => $role],
+        ]);
         $this->info("{$user->email} is now a {$user->role}.");
 
         return self::SUCCESS;

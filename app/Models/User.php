@@ -21,8 +21,11 @@ class User extends Authenticatable
     protected $fillable = [
         'name',
         'email',
+        'username',
         'password',
         'role',
+        'is_active',
+        'must_change_password',
     ];
 
     /**
@@ -45,6 +48,8 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'is_active' => 'boolean',
+            'must_change_password' => 'boolean',
         ];
     }
 
@@ -65,6 +70,11 @@ class User extends Authenticatable
             'agent' => 'Support Agent',
             default => 'Customer',
         };
+    }
+
+    public function auditLogs()
+    {
+        return $this->hasMany(AuditLog::class, 'actor_id');
     }
 
     public function tickets()

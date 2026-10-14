@@ -4,7 +4,7 @@
     <section class="page">
         <div class="page-heading">
             <div><span class="eyebrow">Support ticket #{{ $ticket->id }}</span><h1>{{ $ticket->subject }}</h1><p>Opened {{ $ticket->created_at->format('M j, Y') }} by {{ $ticket->owner->name }}</p></div>
-            @if($ticket->status !== 'closed')<a class="button button-quiet" href="{{ route('tickets.edit', $ticket) }}">Edit ticket</a>@endif
+            @if($ticket->status !== 'closed' || auth()->user()->isAdmin())<a class="button button-quiet" href="{{ route('tickets.edit', $ticket) }}">Edit ticket</a>@endif
         </div>
         <div class="ticket-layout">
             <div>

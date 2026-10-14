@@ -7,6 +7,7 @@ use App\Models\TicketAttachment;
 use App\Models\TicketReply;
 use App\Models\User;
 use App\Notifications\TicketUpdated;
+use App\Support\Audit;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -70,6 +71,7 @@ class TicketController extends Controller
 
         $ticket = $request->user()->tickets()->create(collect($data)->except('attachments')->all());
         $this->storeAttachments($request, $ticket);
+        Audit::record($request, 'ticket.created', "Created ticket #{$ticket->id}: {$ticket->subject}.", $ticket);
 
         return redirect()->route('tickets.show', $ticket)->with('status', 'Your support ticket has been created.');
     }
@@ -80,7 +82,7 @@ class TicketController extends Controller
         $ticket->load(['owner', 'assignee', 'attachments.uploader', 'replies']);
 
         $agents = $request->user()->isStaff()
-            ? User::query()->whereIn('role', ['admin', 'agent'])->orderBy('name')->get()
+            ? User::query()->whereIn('role', ['admin', 'agent'])->where('is_active', true)->orderBy('name')->get()
             : collect();
 
         return view('tickets.show', compact('ticket', 'agents'));
@@ -89,10 +91,10 @@ class TicketController extends Controller
     public function edit(Request $request, Ticket $ticket): View
     {
         $this->authorizeTicket($request, $ticket);
-        abort_if($ticket->status === 'closed', 403);
+        abort_if($ticket->status === 'closed' && ! $request->user()->isAdmin(), 403);
 
         $agents = $request->user()->isStaff()
-            ? User::query()->whereIn('role', ['admin', 'agent'])->orderBy('name')->get()
+            ? User::query()->whereIn('role', ['admin', 'agent'])->where('is_active', true)->orderBy('name')->get()
             : collect();
 
         return view('tickets.edit', compact('ticket', 'agents'));
@@ -101,7 +103,7 @@ class TicketController extends Controller
     public function update(Request $request, Ticket $ticket): RedirectResponse
     {
         $this->authorizeTicket($request, $ticket);
-        abort_if($ticket->status === 'closed', 403);
+        abort_if($ticket->status === 'closed' && ! $request->user()->isAdmin(), 403);
         $user = $request->user();
 
         $rules = [
@@ -115,11 +117,12 @@ class TicketController extends Controller
 
         if ($user->isStaff()) {
             $rules['status'] = ['required', Rule::in(self::STATUSES)];
-            $rules['assigned_to'] = ['nullable', 'integer', Rule::exists('users', 'id')->whereIn('role', ['admin', 'agent'])];
+            $rules['assigned_to'] = ['nullable', 'integer', Rule::exists('users', 'id')->whereIn('role', ['admin', 'agent'])->where('is_active', true)];
         }
 
         $data = $request->validate($rules);
         $previousStatus = $ticket->status;
+        $previousAssignee = $ticket->assigned_to;
         $ticket->fill(collect($data)->except(['attachments', 'status', 'assigned_to'])->all());
 
         if ($user->isStaff()) {
@@ -132,6 +135,15 @@ class TicketController extends Controller
 
         $ticket->save();
         $this->storeAttachments($request, $ticket);
+
+        if ($user->isStaff() && ($previousStatus !== $ticket->status || $previousAssignee !== $ticket->assigned_to)) {
+            Audit::record($request, 'ticket.updated', "Updated ticket #{$ticket->id}.", $ticket, [
+                'status_before' => $previousStatus,
+                'status_after' => $ticket->status,
+                'assigned_to_before' => $previousAssignee,
+                'assigned_to_after' => $ticket->assigned_to,
+            ]);
+        }
 
         if ($previousStatus !== $ticket->status) {
             $this->notifyParticipants(
@@ -160,6 +172,9 @@ class TicketController extends Controller
             'body' => $data['body'],
         ]);
         $this->storeAttachments($request, $ticket, $reply);
+        Audit::record($request, 'ticket.reply_added', "Added a reply to ticket #{$ticket->id}.", $ticket, [
+            'reply_id' => $reply->id,
+        ]);
 
         $this->notifyParticipants(
             $ticket,
