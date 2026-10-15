@@ -7,6 +7,8 @@ Helpdesk Pro helps businesses manage customer support requests through a central
 **Live Demo:** https://helpdesk.ndapps.tech/  
 **Repository:** https://github.com/karthikweb123/helpdesk-pro
 
+Public registration sends a six-digit email verification code. The code expires after 10 minutes, and an account is created only after the code is verified. Configure `MAIL_*` in `.env` to deliver the code; the example log mailer records it locally instead.
+
 ## Features
 
 ### Customer Portal

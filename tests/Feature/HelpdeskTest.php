@@ -7,6 +7,7 @@ use App\Models\KnowledgeArticle;
 use App\Models\Ticket;
 use App\Models\TicketAttachment;
 use App\Models\User;
+use App\Notifications\RegistrationVerificationCode;
 use App\Notifications\TicketUpdated;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -20,23 +21,68 @@ class HelpdeskTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_registration_creates_a_customer_account(): void
+    public function test_registration_requires_email_verification_before_creating_a_customer_account(): void
     {
-        $response = $this->post(route('register.store'), [
+        Notification::fake();
+        $registration = [
             'name' => 'Jamie Customer',
             'username' => 'jamie-customer',
             'email' => 'jamie@example.test',
             'password' => 'A-long-test-password-1',
             'password_confirmation' => 'A-long-test-password-1',
-        ]);
+        ];
 
-        $response->assertRedirect(route('dashboard'));
+        $this->from(route('register'))->post(route('register.store'), $registration)
+            ->assertRedirect(route('register'))
+            ->assertSessionHas('verification_sent', true);
+
+        $this->assertGuest();
+        $this->assertDatabaseMissing('users', ['email' => 'jamie@example.test']);
+
+        $code = null;
+        Notification::assertSentOnDemand(
+            RegistrationVerificationCode::class,
+            function (RegistrationVerificationCode $notification, array $channels, $notifiable) use (&$code): bool {
+                $code = $notification->code;
+
+                return in_array('mail', $channels, true)
+                    && $notifiable->routeNotificationFor('mail') === 'jamie@example.test';
+            }
+        );
+        $this->assertNotNull($code);
+
+        $this->post(route('register.store'), $registration + ['verification_code' => $code])
+            ->assertRedirect(route('dashboard'));
+
         $this->assertAuthenticated();
         $this->get(route('dashboard'))->assertOk()->assertSee('Good to see you');
         $this->assertDatabaseHas('users', [
             'email' => 'jamie@example.test',
             'role' => 'customer',
         ]);
+        $this->assertNotNull(User::where('email', 'jamie@example.test')->value('email_verified_at'));
+    }
+
+    public function test_registration_rejects_an_invalid_email_verification_code(): void
+    {
+        Notification::fake();
+        $registration = [
+            'name' => 'Jamie Customer',
+            'username' => 'jamie-customer',
+            'email' => 'jamie@example.test',
+            'password' => 'A-long-test-password-1',
+            'password_confirmation' => 'A-long-test-password-1',
+        ];
+
+        $this->post(route('register.store'), $registration);
+
+        $this->from(route('register'))->post(route('register.store'), $registration + ['verification_code' => '000000'])
+            ->assertRedirect(route('register'))
+            ->assertSessionHasErrors('verification_code')
+            ->assertSessionHas('verification_sent', true);
+
+        $this->assertGuest();
+        $this->assertDatabaseMissing('users', ['email' => 'jamie@example.test']);
     }
 
     public function test_customers_can_only_view_their_own_tickets(): void
